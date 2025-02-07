@@ -25,6 +25,8 @@ if 'last_sign_time' not in st.session_state:
     st.session_state.last_sign_time = time.time()
 if 'pending_signs' not in st.session_state:
     st.session_state.pending_signs = []
+if 'selected_index' not in st.session_state:
+    st.session_state.selected_index = -1  # Track the selected letter index for deletion
 
 def speak_text(text):
     # Split text into words
@@ -37,8 +39,8 @@ def speak_text(text):
             os.system(f'espeak "{word}"')
         elif os.name == 'darwin':
             os.system(f'say "{word}"')
-        # Wait for 3 seconds between words
-        time.sleep(3)
+        # Wait for 1 second between words
+        time.sleep(1)
 
 def get_finger_angles(landmarks):
     angles = {}
@@ -199,18 +201,24 @@ st.sidebar.markdown("""
 """)
 
 # Add voice output button
-voice_button = st.sidebar.button('Speak Text (3s pause between words)')
+voice_button = st.sidebar.button('Speak Text (1s pause between words)')
 clear_button = st.sidebar.button('Clear Text')
 space_button = st.sidebar.button('Add Space')
+backspace_button = st.sidebar.button('Backspace')
 
 if clear_button:
     st.session_state.current_sentence = ""
     st.session_state.last_detected_sign = ""
     st.session_state.last_sign_time = time.time()
     st.session_state.pending_signs = []
+    st.session_state.selected_index = -1
 
 if space_button:
     st.session_state.current_sentence += " "
+
+if backspace_button:
+    if st.session_state.current_sentence:
+        st.session_state.current_sentence = st.session_state.current_sentence[:-1]
 
 if voice_button and st.session_state.current_sentence.strip():
     thread = Thread(target=speak_text, args=(st.session_state.current_sentence.strip(),))
@@ -220,6 +228,23 @@ st.markdown('## Output')
 gesture_text = st.empty()
 sentence_display = st.empty()
 stframe = st.empty()
+
+# Display the current sentence with clickable letters
+if st.session_state.current_sentence:
+    st.markdown("### Click a letter to delete it:")
+    letters = list(st.session_state.current_sentence)
+    cols = st.columns(len(letters))
+    for i, letter in enumerate(letters):
+        if cols[i].button(letter, key=f"letter_{i}"):
+            st.session_state.selected_index = i
+
+# Delete the selected letter
+if st.session_state.selected_index != -1:
+    st.session_state.current_sentence = (
+        st.session_state.current_sentence[:st.session_state.selected_index] +
+        st.session_state.current_sentence[st.session_state.selected_index + 1:]
+    )
+    st.session_state.selected_index = -1
 
 cap = cv2.VideoCapture(0)
 
@@ -235,6 +260,10 @@ try:
 
         image_height, image_width, _ = frame.shape
 
+        # Reset sign and color at the start of each frame
+        sign = ""
+        color = (128, 128, 128)  # Default color for no sign
+
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
                 mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
@@ -246,9 +275,14 @@ try:
                     st.session_state.last_sign_time = time.time()
                     st.session_state.pending_signs.append(sign)
 
-                cv2.putText(frame, f"Letter: {sign}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-                gesture_text.markdown(f"## Detected Letter: {sign}")
+        # Only display the detected letter if a sign is detected
+        if sign:
+            cv2.putText(frame, f"Letter: {sign}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+            gesture_text.markdown(f"## Detected Letter: {sign}")
+        else:
+            gesture_text.markdown("## Detected Letter: ")  # Clear the displayed letter
 
+        # Update the sentence display
         sentence_display.markdown(f"### Text: {st.session_state.current_sentence.strip()}")
         stframe.image(frame, channels='BGR', use_container_width=True)
 
